@@ -1,0 +1,94 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // ===============================================================
+    // Assumed Data Model
+    // ===============================================================
+    //
+    // Collection: participants
+    // Document ID: {uid} (User's Firebase Auth UID)
+    // Fields:
+    //   - name: string (required, 1-100 chars)
+    //   - uid: string (required, must match auth.uid)
+    //   - email: string (required, must match auth.token.email)
+    //   - weekend: string (required, "Weekend 1" or "Weekend 2")
+    //   - socials: string (optional, 0-200 chars)
+    //   - joinedAt: timestamp (required)
+    //
+    // ===============================================================
+
+    // ===============================================================
+    // Helper Functions
+    // ===============================================================
+    
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    function isAdmin() {
+      return isAuthenticated() &&
+        (get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin' ||
+          (request.auth.token.email == "amaldev.ad71868@gmail.com" && request.auth.token.email_verified == true));
+    }
+
+    function isValidEmail(email) {
+      return email is string &&
+        email.matches("^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$");
+    }
+
+    function hasOnlyAllowedFields(fields) {
+      return request.resource.data.keys().hasOnly(fields);
+    }
+
+    function hasRequiredFields(fields) {
+      return request.resource.data.keys().hasAll(fields);
+    }
+
+    // ===============================================================
+    // Domain Validators
+    // ===============================================================
+
+    function isValidParticipant(data) {
+      return hasRequiredFields(['name', 'weekend', 'joinedAt']) &&
+             hasOnlyAllowedFields(['name', 'uid', 'email', 'weekend', 'socials', 'joinedAt']) &&
+             data.name is string && data.name.size() > 0 && data.name.size() <= 100 &&
+             data.weekend in ['Weekend 1', 'Weekend 2'] &&
+             (!('socials' in data) || (data.socials is string && data.socials.size() <= 200)) &&
+             data.joinedAt is timestamp;
+    }
+
+    // ===============================================================
+    // Rules
+    // ===============================================================
+
+    match /settings/{settingId} {
+      // Allow anyone to read settings (like matchingEnabled)
+      allow read: if true;
+      // Only admin can update settings
+      allow write: if isAdmin();
+    }
+
+    match /participants/{participantId} {
+      // Allow anyone to see the list of participants
+      allow read: if true;
+      
+      // Allow anyone to join or update their profile
+      // We still validate the data structure
+      allow create: if isValidParticipant(request.resource.data);
+      allow update: if isValidParticipant(request.resource.data);
+      
+      // Allow deletion (optional, but we'll keep it for now if they have the ID)
+      allow delete: if true;
+    }
+
+    // Default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

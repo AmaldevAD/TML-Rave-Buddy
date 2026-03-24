@@ -1,0 +1,61 @@
+{
+  "entities": {
+    "Participant": {
+      "title": "Participant",
+      "description": "A person who has joined the rave buddy finder.",
+      "type": "object",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "The name of the participant."
+        },
+        "uid": {
+          "type": "string",
+          "description": "The unique ID of the participant from Firebase Auth."
+        },
+        "email": {
+          "type": "string",
+          "format": "email",
+          "description": "The email of the participant."
+        },
+        "weekend": {
+          "type": "string",
+          "enum": ["Weekend 1", "Weekend 2"],
+          "description": "The weekend the participant is attending."
+        },
+        "socials": {
+          "type": "string",
+          "description": "Optional social media handle or contact info."
+        },
+        "joinedAt": {
+          "type": "string",
+          "format": "date-time",
+          "description": "The time the participant joined."
+        }
+      },
+      "required": ["name", "uid", "email", "weekend", "joinedAt"]
+    },
+    "Settings": {
+      "title": "Settings",
+      "description": "Global application settings.",
+      "type": "object",
+      "properties": {
+        "matchingEnabled": {
+          "type": "boolean",
+          "description": "Whether the matching feature is enabled."
+        }
+      },
+      "required": ["matchingEnabled"]
+    }
+  },
+  "firestore": {
+    "/participants/{participantId}": {
+      "schema": "Participant",
+      "description": "Collection of rave buddy participants."
+    },
+    "/settings/{settingId}": {
+      "schema": "Settings",
+      "description": "Global settings document."
+    }
+  }
+}
