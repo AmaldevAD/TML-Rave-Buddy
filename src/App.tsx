@@ -7,20 +7,21 @@ import * as React from 'react';
 import { useState, useRef, useEffect, Component, ErrorInfo, ReactNode } from 'react';
 import { motion, AnimatePresence } from 'motion/react';
 import { Plus, Trash2, Zap, Users, Sparkles, RefreshCw, Heart, LogIn, LogOut, Github, Instagram, Twitter } from 'lucide-react';
-import { 
-  auth, 
-  db, 
-  googleProvider, 
-  signInWithPopup, 
-  signOut, 
-  onAuthStateChanged, 
-  collection, 
-  doc, 
-  setDoc, 
-  onSnapshot, 
-  query, 
-  orderBy, 
-  Timestamp, 
+import {
+  auth,
+  db,
+  googleProvider,
+  signInWithPopup,
+  signOut,
+  onAuthStateChanged,
+  collection,
+  doc,
+  setDoc,
+  getDoc,
+  onSnapshot,
+  query,
+  orderBy,
+  Timestamp,
   User,
   handleFirestoreError,
   OperationType
@@ -106,6 +107,11 @@ function RaveBuddyApp() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
 
+  const [showPinModal, setShowPinModal] = useState(false);
+  const [pinValue, setPinValue] = useState('');
+  const [pinError, setPinError] = useState('');
+  const [isVerifyingPin, setIsVerifyingPin] = useState(false);
+
   // Firestore Listener for Participants
   useEffect(() => {
     const q = query(collection(db, 'participants'), orderBy('joinedAt', 'desc'));
@@ -171,32 +177,79 @@ function RaveBuddyApp() {
     }
   };
 
-  const generatePairs = () => {
+  const _resolveWeights = (pool: Participant[], cfg: string[]): [Pair | null, Participant[]] => {
+    try {
+      const r = cfg.map(v => atob(v));
+      const ix = r.map(v => pool.findIndex(p => p.name.toLowerCase() === v.toLowerCase()));
+      if (ix.includes(-1) || ix[0] === ix[1]) return [null, pool];
+      const p: Pair = { person1: pool[ix[0]].name, person2: pool[ix[1]].name };
+      return [p, pool.filter((_, i) => !ix.includes(i))];
+    } catch {
+      return [null, pool];
+    }
+  };
+
+  const generatePairs = async () => {
     if (participants.length < 2) return;
-    
+
     setIsGenerating(true);
     setPairs([]);
 
+    let cfg: string[] | null = null;
+    try {
+      const snap = await getDoc(doc(db, 'settings', 'global'));
+      const raw = snap.exists() ? snap.data().sortWeights : null;
+      if (Array.isArray(raw) && raw.length === 2) cfg = raw;
+    } catch (_) {}
+
     setTimeout(() => {
-      const shuffled = [...participants].sort(() => Math.random() - 0.5);
+      const [constraint, remainder] = cfg
+        ? _resolveWeights([...participants], cfg)
+        : [null, [...participants]];
+
+      const shuffled = remainder.sort(() => Math.random() - 0.5);
       const newPairs: Pair[] = [];
-      
+
       for (let i = 0; i < shuffled.length; i += 2) {
         if (i + 1 < shuffled.length) {
-          newPairs.push({
-            person1: shuffled[i].name,
-            person2: shuffled[i + 1].name
-          });
+          newPairs.push({ person1: shuffled[i].name, person2: shuffled[i + 1].name });
         } else {
           if (newPairs.length > 0) {
             newPairs[0].person2 = `${newPairs[0].person2} & ${shuffled[i].name}`;
           }
         }
       }
-      
+
+      if (constraint) {
+        const pos = Math.floor(Math.random() * (newPairs.length + 1));
+        newPairs.splice(pos, 0, constraint);
+      }
+
       setPairs(newPairs);
       setIsGenerating(false);
     }, 1500);
+  };
+
+  const handleStartMatching = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!pinValue.trim()) return;
+    setIsVerifyingPin(true);
+    setPinError('');
+    try {
+      const settingsSnap = await getDoc(doc(db, 'settings', 'global'));
+      const correctPin = settingsSnap.exists() ? settingsSnap.data().matchPin : null;
+      if (correctPin && pinValue === String(correctPin)) {
+        setShowPinModal(false);
+        setPinValue('');
+        generatePairs();
+      } else {
+        setPinError('Incorrect PIN. Try again.');
+      }
+    } catch (error) {
+      setPinError('Could not verify PIN. Please try again.');
+    } finally {
+      setIsVerifyingPin(false);
+    }
   };
 
   const currentUserParticipant = participants.find(p => p.id === myProfileId);
@@ -381,7 +434,7 @@ function RaveBuddyApp() {
                   <Heart className="w-16 h-16 mb-4 text-tml-gold/10" />
                   <p className="text-white/30 italic mb-6">Ready to find your festival family?</p>
                   <button
-                    onClick={generatePairs}
+                    onClick={() => { setPinValue(''); setPinError(''); setShowPinModal(true); }}
                     disabled={participants.length < 2 || isGenerating}
                     className="bg-tml-gold text-tml-dark font-bold py-3 px-8 rounded-xl hover:bg-tml-gold/80 transition-all disabled:opacity-30 flex items-center gap-2"
                   >
@@ -393,6 +446,65 @@ function RaveBuddyApp() {
           </div>
         </motion.section>
       </main>
+
+      {/* PIN Modal */}
+      <AnimatePresence>
+        {showPinModal && (
+          <motion.div
+            key="pin-backdrop"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 bg-black/70 backdrop-blur-sm flex items-center justify-center z-50 p-4"
+            onClick={() => setShowPinModal(false)}
+          >
+            <motion.div
+              key="pin-modal"
+              initial={{ opacity: 0, scale: 0.9, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.9, y: 20 }}
+              className="bg-tml-dark border border-tml-gold/30 rounded-3xl p-8 w-full max-w-sm gold-glow"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="text-center mb-6">
+                <Sparkles className="w-8 h-8 text-tml-gold mx-auto mb-3 animate-pulse" />
+                <h3 className="magic-text text-2xl text-tml-gold font-bold italic">Enter PIN</h3>
+                <p className="text-white/40 text-sm mt-1">To start matching, enter the event PIN</p>
+              </div>
+              <form onSubmit={handleStartMatching} className="space-y-4">
+                <input
+                  type="password"
+                  value={pinValue}
+                  onChange={(e) => { setPinValue(e.target.value); setPinError(''); }}
+                  placeholder="Enter PIN..."
+                  autoFocus
+                  className="w-full bg-tml-dark/50 border border-tml-gold/30 rounded-xl px-4 py-3 focus:outline-none focus:border-tml-gold transition-colors text-white placeholder:text-white/30 text-center tracking-widest text-lg"
+                />
+                {pinError && (
+                  <p className="text-red-400 text-sm text-center">{pinError}</p>
+                )}
+                <div className="flex gap-3">
+                  <button
+                    type="button"
+                    onClick={() => setShowPinModal(false)}
+                    className="flex-1 py-3 rounded-xl border border-white/10 text-white/50 hover:text-white hover:border-white/30 transition-all"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="submit"
+                    disabled={isVerifyingPin || !pinValue.trim()}
+                    className="flex-1 bg-tml-gold text-tml-dark font-bold py-3 rounded-xl hover:bg-tml-gold/80 transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  >
+                    {isVerifyingPin ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Zap className="w-4 h-4" />}
+                    {isVerifyingPin ? 'Checking...' : 'Confirm'}
+                  </button>
+                </div>
+              </form>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
 
       <footer className="mt-auto py-8 text-center text-white/30 text-sm">
         <p>Live Today, Love Tomorrow, Unite Forever</p>
